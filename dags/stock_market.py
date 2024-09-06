@@ -1,11 +1,15 @@
 from airflow.decorators import dag, task  
 from airflow.hooks.base import BaseHook  
-from datetime import datetime
-import requests
 from airflow.sensors.base import PokeReturnValue
 from airflow.operators.python_operator import PythonOperator
 from airflow.providers.docker.operators.docker import DockerOperator    
-from include.stock_market.tasks import _get_stock_prices, _store_prices
+from include.stock_market.tasks import _get_stock_prices, _store_prices, _get_formated_csv, BUCKET_NAME
+from astro import sql as aql
+from astro.files import File
+from astro.sql.table import Table, Metadata
+
+from datetime import datetime
+import requests
 
 SYMBOL = 'AAPL'
 
@@ -54,7 +58,7 @@ def stock_market():
         auto_remove = True,
         container_name = 'format_prices',   
         api_version = 'auto',
-        doker_url = 'tcp://docker-proxy:2375',
+        docker_url = 'tcp://docker-proxy:2375',
         network_mode = 'container:spark-master',
         tty = True,
         xcom_all = False,
@@ -64,6 +68,36 @@ def stock_market():
             }
     )
 
-    is_api_availabe() >> get_stock_prices >> store_prices >> format_prices
+    get_formated_prices = PythonOperator(
+        task_id = 'get_formated_prices',
+        python_callable = _get_formated_csv,
+        op_kwargs = {
+        'path': '{{ task_instance.xcom_pull(task_ids="store_prices") }}'
+            }
+    )
+
+    load_to_dw = aql.load_file(
+        task_id='load_to_dw',
+        input_file=File(
+            path=f"s3://{BUCKET_NAME}/{{{{ task_instance.xcom_pull(task_ids='get_formated_prices') }}}}",
+            conn_id='minio',
+        ),
+        output_table=Table(
+            name='stock_market',
+            conn_id='postgres',
+            metadata=Metadata(
+                schema='public',
+            ),
+        ),
+        load_options={
+            "aws_access_key_id": BaseHook.get_connection('minio').login,
+            "aws_secret_access_key": BaseHook.get_connection('minio').password,
+            "endpoint_url": BaseHook.get_connection('minio').host,
+        }
+    
+    )
+
+
+    is_api_availabe() >> get_stock_prices >> store_prices >> format_prices >> get_formated_prices >> load_to_dw
 
 stock_market()
