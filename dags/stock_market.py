@@ -4,7 +4,7 @@ from datetime import datetime
 import requests
 from airflow.sensors.base import PokeReturnValue
 from airflow.operators.python_operator import PythonOperator
-from include.stock_market.tasks import _get_stock_prices
+from include.stock_market.tasks import _get_stock_prices, _store_prices
 
 SYMBOL = 'AAPL'
 
@@ -28,7 +28,7 @@ def stock_market():
         api = BaseHook.get_connection('stock_api')
         url = f"{api.host}{api.extra_dejson['endpoint']}"
         response = requests.get(url, headers = api.extra_dejson['headers'])
-        condition = response.json()['finance']["result"] is None
+        condition = response.json()['finance']['result'] is None
 
         return PokeReturnValue(is_done = condition, xcom_value = url)
 
@@ -41,7 +41,12 @@ def stock_market():
           'symbol': SYMBOL}
     )
 
+    store_prices = PythonOperator(
+        task_id = 'store_prices',
+        python_callable = _store_prices,
+        op_kwargs = {'stock': '{{ task_instance.xcom_pull(task_ids = "get_stock_prices")}}'}
+    )
 
-    is_api_availabe() >> get_stock_prices
+    is_api_availabe() >> get_stock_prices >> store_prices
 
 stock_market()
