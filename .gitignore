@@ -1,1 +1,15 @@
 
+coursse_mat/
+.DS_Store
+__pycache__/
+astro
+.venv
+.env
+.git
+airflow-webserver.pid
+webserver_config.py
+airflow.cfg
+airflow.db
+
+
+
